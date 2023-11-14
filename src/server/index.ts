@@ -21,13 +21,13 @@ function analyzer(opts: AnalyzerPluginOptions = defaultAnalyzerOptions): Plugin 
   const { reportTitle = name } = opts
   const analyzerModule = createAnalyzerModule(opts?.gzipOptions)
   let defaultWd = process.cwd()
-  
+
   const plugin = <Plugin>{
     name,
     apply: 'build',
     enforce: 'post',
     configResolved(config) {
-      defaultWd = config.root
+      defaultWd = config.build.outDir ?? config.root
     },
     generateBundle(_, outputBundle) {
       // After consider. I trust process chunk is enougth. (If you don't think it's right. PR welcome.)

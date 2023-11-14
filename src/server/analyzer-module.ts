@@ -25,6 +25,7 @@ function lexPaths(p: string) {
 export class AnalyzerNode {
   id: string
   label: string
+  isEntry: boolean
   path: string
   statSize: number
   parsedSize: number
@@ -34,13 +35,17 @@ export class AnalyzerNode {
   children: Array<AnalyzerNode>
   // eslint-disable-next-line no-use-before-define
   pairs: Record<string, AnalyzerNode>
-  constructor(id: string, chunk: OutputChunk | RenderedModule) {
+  imports: Array<string>
+
+  constructor(id: string, chunk: OutputChunk | RenderedModule & { isEntry?: boolean }) {
     this.id = id
     this.label = id
     this.path = id
     this.children = []
     this.pairs = Object.create(null)
     this.code = Buffer.from(chunk.code ?? '', 'utf8')
+    this.isEntry = Boolean(chunk.isEntry)
+    this.imports = []
     this.parsedSize = 0
     this.statSize = 0
     this.gzipSize = 0
@@ -84,10 +89,14 @@ export class AnalyzerNode {
       if (!childNode) childNode = references.addPairs(createAnalyzerNode(folder, { code: '' } as any))
       references = childNode
     })
-    
+
     if (fileName) {
       references.addPairsNode(fileName, node)
     }
+  }
+
+  addImports(imports: string[]) {
+    this.imports.push(...imports)
   }
 
   setup(modules: Record<string, RenderedModule>) {
@@ -132,14 +141,25 @@ export class AnalyzerModule {
 
   addModule(bundleName: string, bundle: OutputChunk) {
     const node = createAnalyzerNode(bundleName, bundle)
+    node.addImports(bundle.imports)
     node.setup(bundle.modules)
     node.pairs = {}
     this.modules.push(node)
   }
 
   async processfoamModule() {
-    const res = await Promise.all(this.modules.map(async (node) => ({ ...await this.traverse(node), isAsset: true })))
+    let res: Foam[] = await Promise.all(this.modules.map(async (node) => ({ ...await this.traverse(node), isAsset: true })))
 
+    const findEntrypoints = (node: Foam): string[] => node.imports
+      .flatMap(from => {
+        const parent = res.find(foam => foam.id === from)
+        if (!parent) {
+          return []
+        }
+        return parent.isEntry ? [parent.id] : findEntrypoints(parent)
+      })
+
+    res = res.map(node => ({ ...node, imports: findEntrypoints(node) }))
     const mergeNodes = (node: Foam) => {
       if (Array.isArray(node.groups)) {
         if (node.groups.length === 1 && !path.extname(node.id)) {
@@ -162,7 +182,7 @@ export class AnalyzerModule {
   }
 
   private async traverse(node: AnalyzerNode) {
-    const base = pick(node, ['id', 'label', 'path', 'gzipSize', 'statSize', 'parsedSize', 'gzipSize'])
+    const base = pick(node, ['id', 'label', 'path', 'gzipSize', 'statSize', 'parsedSize', 'gzipSize', 'imports', 'isEntry'])
     base.gzipSize = (await this.compress(node.code)).byteLength
     if (node.children.length) {
       const groups = await Promise.all(node.children.map((child) => this.traverse(child)))
